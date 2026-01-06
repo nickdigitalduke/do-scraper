@@ -1,10 +1,13 @@
 [phases.setup]
-nixPkgs = ["python312", "python312Packages.pip", "python312Packages.setuptools", "python312Packages.wheel", "chromium", "chromedriver"]
+nixPkgs = ["python312", "chromium", "chromedriver"]
 
 [phases.install]
 cmds = [
-  "python3 -m pip install --upgrade pip setuptools wheel",
-  "python3 -m pip install -r requirements.txt",
+  "curl -sS https://bootstrap.pypa.io/get-pip.py -o /tmp/get-pip.py",
+  "python3 /tmp/get-pip.py --user",
+  "export PATH=$HOME/.local/bin:$PATH",
+  "pip3 install --upgrade pip setuptools wheel",
+  "pip3 install -r requirements.txt",
   "export CHROME_BIN=$(which chromium)"
 ]
 
