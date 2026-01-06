@@ -24,7 +24,7 @@ class User(UserMixin):
 
 # Hardcoded gebruikers (kan later naar database)
 USERS = {
-    'admin': generate_password_hash(os.environ.get('ADMIN_PASSWORD', 'admin123'))
+    'admin': generate_password_hash(os.environ.get('ADMIN_PASSWORD', 'Migratie123!'))
 }
 
 @login_manager.user_loader
