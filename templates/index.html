@@ -234,6 +234,11 @@
                 </div>
                 
                 <div class="form-group">
+                    <label for="title">Titel voor scrape (optioneel):</label>
+                    <input type="text" id="title" name="title" placeholder="Bijv: Gevelreiniging Nederland">
+                </div>
+                
+                <div class="form-group">
                     <label for="url">URL:</label>
                     <input type="text" id="url" name="url" value="https://trustoo.nl/nederland/elektricien/" required>
                 </div>
@@ -279,6 +284,13 @@
                 </div>
                 <div id="companiesCount"></div>
             </div>
+            <div id="downloadSection" style="display: none; margin-top: 15px;">
+                <h3>Download bestanden:</h3>
+                <div style="display: flex; gap: 10px;">
+                    <a id="downloadCsv" href="#" class="btn-primary" style="text-decoration: none; display: inline-block; padding: 10px 20px;">Download CSV</a>
+                    <a id="downloadExcel" href="#" class="btn-primary" style="text-decoration: none; display: inline-block; padding: 10px 20px;">Download Excel</a>
+                </div>
+            </div>
         </div>
     </div>
     
@@ -309,7 +321,8 @@
                 url: formData.get('url'),
                 mode: formData.get('mode'),
                 csv_file: formData.get('csv_file') || null,
-                excel_file: formData.get('excel_file') || null
+                excel_file: formData.get('excel_file') || null,
+                title: formData.get('title') || null
             };
             
             try {
@@ -340,9 +353,102 @@
             if (!confirm('Weet je zeker dat je wilt stoppen?')) return;
             
             try {
-                await fetch('/api/stop', { method: 'POST' });
+                const response = await fetch('/api/stop', { method: 'POST' });
+                if (response.ok) {
+                    const stopData = await response.json();
+                    
+                    // Direct status checken na stop
+                    document.getElementById('outputBox').textContent += '\n⚠️ Stop aangevraagd... Wachten op bestanden...\n';
+                    
+                    // Als er al bestanden zijn, toon ze direct
+                    if (stopData.csv_file || stopData.excel_file || stopData.companies_count > 0) {
+                        if (stopData.companies_count > 0) {
+                            document.getElementById('companiesCount').textContent = `📊 ${stopData.companies_count} bedrijven verzameld`;
+                        }
+                        
+                        const downloadSection = document.getElementById('downloadSection');
+                        if (downloadSection) {
+                            downloadSection.style.display = 'block';
+                            
+                            if (stopData.csv_file) {
+                                const csvLink = document.getElementById('downloadCsv');
+                                if (csvLink) {
+                                    csvLink.href = `/api/download/${stopData.csv_file}`;
+                                    csvLink.style.display = 'inline-block';
+                                }
+                            }
+                            if (stopData.excel_file) {
+                                const excelLink = document.getElementById('downloadExcel');
+                                if (excelLink) {
+                                    excelLink.href = `/api/download/${stopData.excel_file}`;
+                                    excelLink.style.display = 'inline-block';
+                                }
+                            }
+                        }
+                    }
+                    
+                    // Verhoog frequentie van status checks tijdens stoppen
+                    if (statusCheckInterval) {
+                        clearInterval(statusCheckInterval);
+                    }
+                    // Check elke 500ms tijdens stoppen voor snellere respons
+                    statusCheckInterval = setInterval(async () => {
+                        try {
+                            const statusResponse = await fetch('/api/status');
+                            const statusData = await statusResponse.json();
+                            
+                            if (statusData.output) {
+                                document.getElementById('outputBox').textContent = statusData.output;
+                                document.getElementById('outputBox').scrollTop = document.getElementById('outputBox').scrollHeight;
+                            }
+                            
+                            if (statusData.companies_count > 0) {
+                                document.getElementById('companiesCount').textContent = `📊 ${statusData.companies_count} bedrijven verzameld`;
+                            }
+                            
+                            // Als gestopt EN bestanden beschikbaar, toon direct download knoppen
+                            if (!statusData.running) {
+                                isRunning = false;
+                                document.getElementById('startBtn').disabled = false;
+                                document.getElementById('stopBtn').disabled = true;
+                                document.getElementById('statusIndicator').className = 'status-indicator status-stopped';
+                                document.getElementById('statusText').textContent = 'Gestopt';
+                                
+                                // Toon download knoppen direct als er bestanden zijn
+                                if (statusData.csv_file || statusData.excel_file || statusData.companies_count > 0) {
+                                    const downloadSection = document.getElementById('downloadSection');
+                                    if (downloadSection) {
+                                        downloadSection.style.display = 'block';
+                                        
+                                        if (statusData.csv_file) {
+                                            const csvLink = document.getElementById('downloadCsv');
+                                            if (csvLink) {
+                                                csvLink.href = `/api/download/${statusData.csv_file}`;
+                                                csvLink.style.display = 'inline-block';
+                                            }
+                                        }
+                                        if (statusData.excel_file) {
+                                            const excelLink = document.getElementById('downloadExcel');
+                                            if (excelLink) {
+                                                excelLink.href = `/api/download/${statusData.excel_file}`;
+                                                excelLink.style.display = 'inline-block';
+                                            }
+                                        }
+                                    }
+                                }
+                                
+                                // Ga terug naar normale status check frequentie
+                                clearInterval(statusCheckInterval);
+                                startStatusCheck();
+                            }
+                        } catch (error) {
+                            console.error('Status check error:', error);
+                        }
+                    }, 500); // Check elke 500ms tijdens stoppen
+                }
             } catch (error) {
                 console.error('Stop error:', error);
+                alert('Fout bij stoppen: ' + error.message);
             }
         });
         
@@ -363,6 +469,23 @@
                         document.getElementById('companiesCount').textContent = `📊 ${data.companies_count} bedrijven verzameld`;
                     }
                     
+                    // Toon download knoppen als bestanden klaar zijn OF als gestopt is
+                    if ((data.csv_file || data.excel_file) || (!data.running && data.companies_count > 0)) {
+                        const downloadSection = document.getElementById('downloadSection');
+                        if (downloadSection) {
+                            downloadSection.style.display = 'block';
+                            
+                            if (data.csv_file) {
+                                const csvLink = document.getElementById('downloadCsv');
+                                if (csvLink) csvLink.href = `/api/download/${data.csv_file}`;
+                            }
+                            if (data.excel_file) {
+                                const excelLink = document.getElementById('downloadExcel');
+                                if (excelLink) excelLink.href = `/api/download/${data.excel_file}`;
+                            }
+                        }
+                    }
+                    
                     if (!data.running && isRunning) {
                         // Scrapen is gestopt
                         isRunning = false;
@@ -370,6 +493,30 @@
                         document.getElementById('stopBtn').disabled = true;
                         document.getElementById('statusIndicator').className = 'status-indicator status-stopped';
                         document.getElementById('statusText').textContent = 'Klaar';
+                        
+                        // Toon download knoppen als er data is verzameld OF bestanden beschikbaar zijn
+                        if (data.companies_count > 0 || data.csv_file || data.excel_file) {
+                            const downloadSection = document.getElementById('downloadSection');
+                            if (downloadSection) {
+                                downloadSection.style.display = 'block';
+                                
+                                // Update download links
+                                if (data.csv_file) {
+                                    const csvLink = document.getElementById('downloadCsv');
+                                    if (csvLink) {
+                                        csvLink.href = `/api/download/${data.csv_file}`;
+                                        csvLink.style.display = 'inline-block';
+                                    }
+                                }
+                                if (data.excel_file) {
+                                    const excelLink = document.getElementById('downloadExcel');
+                                    if (excelLink) {
+                                        excelLink.href = `/api/download/${data.excel_file}`;
+                                        excelLink.style.display = 'inline-block';
+                                    }
+                                }
+                            }
+                        }
                         
                         if (data.error) {
                             document.getElementById('outputBox').textContent += '\n\n❌ Fout: ' + data.error;

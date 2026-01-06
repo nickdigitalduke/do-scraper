@@ -309,7 +309,8 @@ class ScraperGUI:
                 error_msg = f"\n\n❌ Fout opgetreden: {str(e)}\n"
                 self.root.after(0, lambda: self.write_output(error_msg))
                 self.root.after(0, lambda: self.status_var.set("Fout opgetreden"))
-                self.root.after(0, lambda: messagebox.showerror("Fout", f"Er is een fout opgetreden:\n{str(e)}"))
+                error_msg = str(e)
+                self.root.after(0, lambda msg=error_msg: messagebox.showerror("Fout", f"Er is een fout opgetreden:\n{msg}"))
         finally:
             if self.is_running:
                 self.root.after(0, self.scraping_finished)

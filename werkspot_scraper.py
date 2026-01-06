@@ -14,7 +14,7 @@ from webdriver_manager.chrome import ChromeDriverManager
 class WerkspotScraper:
     """Werkspot scraper - volledig gescheiden van Trustoo code."""
     
-    def __init__(self, headless=True, load_existing=True):
+    def __init__(self, headless=True, load_existing=True, stop_callback=None):
         """Initialiseer de scraper voor Werkspot."""
         options = webdriver.ChromeOptions()
         if headless:
@@ -52,6 +52,12 @@ class WerkspotScraper:
         
         # Checkpoint voor hervatten
         self.checkpoint_clicks = 0
+        
+        # Stop callback functie
+        self.stop_callback = stop_callback
+        
+        # Flag om bij te houden of we gestopt zijn
+        self._was_stopped = False
         
         # Laad bestaande data als die er is
         if load_existing:
@@ -272,8 +278,6 @@ class WerkspotScraper:
     
     def scrape_category_page(self, url, max_additional_pages=None, save_interval=10, resume_from_checkpoint=True):
         """Scrape een Werkspot categoriepagina."""
-        print(f"🚀 Werkspot scrapen gestart: {url}")
-        
         # Navigeer naar de pagina
         self.driver.get(url)
         
@@ -284,32 +288,14 @@ class WerkspotScraper:
         time.sleep(3)
         
         # Eerst de initiële bedrijven verzamelen
-        print("\n📋 Stap 1: Initiële bedrijven verzamelen...")
         initial_count = len(self.companies_data)
-        self._collect_companies_from_page()
-        
-        # Toon info over bestaande data als we hervatten
-        if resume_from_checkpoint and initial_count > 0:
-            print(f"📊 Huidige status: {initial_count} bedrijven al in bestand")
-            if self.companies_data:
-                last_company = self.companies_data[-1]
-                last_name = last_company.get('Naam', 'Onbekend')[:50]
-                print(f"   Laatste bedrijf in bestand: {last_name}")
-        
-        # Klik op 'Toon meer' of 'Laad meer' knoppen
-        print(f"\n🔄 Stap 2: Meer resultaten laden...")
-        if max_additional_pages is None:
-            print("   (Onbeperkt doorgaan tot alle resultaten geladen zijn)")
+        self._collect_companies_from_page(silent=True)
         
         clicks = 0
         if resume_from_checkpoint:
             clicks = self.load_checkpoint()
             if clicks > 0:
-                print(f"\n🔄 Hervatten vanaf checkpoint:")
-                print(f"   📍 Was gebleven bij: {clicks} klikken")
-                print(f"   📊 Bestaande bedrijven in bestand: {len(self.companies_data)}")
-                print(f"   ⏩ Snel doorklikken naar checkpoint...")
-                # Snel doorklikken zonder te verzamelen
+                # Snel doorklikken zonder te verzamelen (stil)
                 for i in range(clicks):
                     try:
                         self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
@@ -325,13 +311,19 @@ class WerkspotScraper:
                                 break
                     except:
                         pass
-                print(f"✅ Bij checkpoint aangekomen, nu verder scrapen vanaf hier...")
-                print(f"   (Nieuwe bedrijven worden toegevoegd, bestaande worden automatisch overgeslagen)\n")
         
         consecutive_failures = 0
         max_failures = 5
         
         while (max_additional_pages is None or clicks < max_additional_pages) and consecutive_failures < max_failures:
+            # Check of stoppen is aangevraagd
+            if self.stop_callback and self.stop_callback():
+                print(f"\n⚠️ Stop aangevraagd door gebruiker...")
+                print(f"   📊 Tot nu toe verzameld: {len(self.companies_data)} bedrijven")
+                print(f"   💾 Bestanden worden opgeslagen...")
+                self._was_stopped = True
+                break
+            
             try:
                 # Scroll naar beneden
                 self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
@@ -377,53 +369,76 @@ class WerkspotScraper:
                 
                 clicks += 1
                 consecutive_failures = 0
-                print(f"\n   ✅ Klik {clicks}: Meer resultaten geladen...")
                 
-                # Sla checkpoint op
+                # Sla checkpoint op (stil)
                 self.save_checkpoint(clicks)
                 
-                # Wacht tot content laadt
-                time.sleep(random.uniform(5, 7))
+                # Wacht LANGER tot content laadt (VOORZICHTIG - voorkom IP blok!)
+                time.sleep(random.uniform(8, 12))
                 try:
                     self.wait.until(lambda driver: driver.execute_script("return document.readyState") == "complete")
                 except:
                     pass
                 
-                # Extra wachttijd voor dynamische content
-                time.sleep(random.uniform(2, 3))
+                # Extra wachttijd voor dynamische content (VOORZICHTIG!)
+                time.sleep(random.uniform(3, 5))
+                
+                # Check opnieuw of stoppen is aangevraagd VOORDAT we verzamelen
+                if self.stop_callback and self.stop_callback():
+                    print(f"\n⚠️ Stop aangevraagd")
+                    print(f"📊 Tot nu toe verzameld: {len(self.companies_data)} bedrijven")
+                    print(f"💾 Bestanden worden opgeslagen...")
+                    self._was_stopped = True
+                    break
                 
                 # Verzamel nieuwe bedrijven
                 new_count_before = len(self.companies_data)
-                self._collect_companies_from_page()
+                self._collect_companies_from_page(silent=True)
                 new_count_after = len(self.companies_data)
                 new_companies = new_count_after - new_count_before
                 
-                if new_companies > 0:
-                    print(f"   ✅ {new_companies} nieuwe bedrijven gevonden (totaal: {new_count_after})")
-                else:
-                    print(f"   ⚠️  Geen nieuwe bedrijven gevonden na klik {clicks}")
+                # Check opnieuw na verzamelen
+                if self.stop_callback and self.stop_callback():
+                    print(f"\n⚠️ Stop aangevraagd")
+                    print(f"📊 Tot nu toe verzameld: {len(self.companies_data)} bedrijven")
+                    print(f"💾 Bestanden worden opgeslagen...")
+                    self._was_stopped = True
+                    if len(self.companies_data) > 0:
+                        try:
+                            temp_csv = f"scrapes/temp_stopped_{int(time.time())}.csv"
+                            temp_excel = f"scrapes/temp_stopped_{int(time.time())}.xlsx"
+                            os.makedirs("scrapes", exist_ok=True)
+                            self.save_to_csv(temp_csv, silent=True)
+                            self.save_to_excel(temp_excel, silent=True)
+                            print(f"✅ Bestanden opgeslagen")
+                        except Exception as save_err:
+                            print(f"⚠️ Fout bij opslaan: {save_err}")
+                    break
                 
-                # Tussentijds opslaan
+                # Alleen tonen als er nieuwe bedrijven zijn gevonden
+                if new_companies > 0:
+                    print(f"✅ {new_companies} nieuwe bedrijven gevonden (totaal: {new_count_after})")
+                
+                # Tussentijds opslaan (stil)
                 if len(self.companies_data) > 0 and len(self.companies_data) % save_interval == 0:
-                    print(f"   💾 Tussentijds opslaan ({len(self.companies_data)} bedrijven)...")
                     self.save_to_excel(silent=True)
                     self.save_to_csv(silent=True)
                 
             except StaleElementReferenceException:
                 consecutive_failures += 1
-                print(f"   ⚠️  Stale element (poging {consecutive_failures}/{max_failures}), opnieuw proberen...")
+                if consecutive_failures >= max_failures:
+                    print(f"\n❌ Te veel fouten, stoppen")
+                    break
                 time.sleep(random.uniform(2, 3))
                 continue
             except Exception as e:
                 consecutive_failures += 1
-                print(f"   ⚠️  Fout (poging {consecutive_failures}/{max_failures}): {str(e)[:80]}")
                 if consecutive_failures >= max_failures:
-                    print("   ❌ Te veel fouten, stoppen met klikken.")
+                    print(f"\n❌ Te veel fouten, stoppen")
                     break
                 time.sleep(random.uniform(2, 3))
                 continue
         
-        print(f"\n✅ Totaal {clicks} extra ladingen uitgevoerd")
         return self.companies_data
     
     def _collect_companies_from_page(self):
@@ -470,12 +485,14 @@ class WerkspotScraper:
                 except:
                     pass
             
-            print(f"   🔍 Gevonden containers op pagina: {len(company_containers)}")
-            
             added_count = 0
             skipped_count = 0
             
             for container in company_containers:
+                # Check of stoppen is aangevraagd tijdens verzamelen
+                if self.stop_callback and self.stop_callback():
+                    break
+                
                 try:
                     company_info = self.extract_company_info(container)
                     
@@ -506,11 +523,12 @@ class WerkspotScraper:
                             self.existing_keys.add((naam, adres))
                         added_count += 1
                         
-                        # Toon elk gevonden bedrijf
-                        display_naam = company_info.get('Naam', 'Geen naam')[:50]
-                        rating = company_info.get('Rating', 'N/A')
-                        reviews = company_info.get('AantalReviews', '0')
-                        print(f"   ✓ {display_naam} (Rating: {rating}, Reviews: {reviews})")
+                        # Alleen tonen als niet silent
+                        if not silent:
+                            display_naam = company_info.get('Naam', 'Geen naam')[:50]
+                            rating = company_info.get('Rating', 'N/A')
+                            reviews = company_info.get('AantalReviews', '0')
+                            print(f"✓ {display_naam} (Rating: {rating}, Reviews: {reviews})")
                     else:
                         skipped_count += 1
                     
@@ -521,8 +539,9 @@ class WerkspotScraper:
                     skipped_count += 1
                     continue
             
-            # Toon alleen toegevoegde en totaal, geen overgeslagen berichten
-            print(f"   📊 Toegevoegd: {added_count}, Totaal: {len(self.companies_data)}")
+            # Alleen totaal tonen als niet silent
+            if not silent and added_count > 0:
+                print(f"📊 Toegevoegd: {added_count}, Totaal: {len(self.companies_data)}")
                     
         except Exception as e:
             print(f"   ⚠️  Fout bij verzamelen bedrijven: {str(e)[:80]}")
@@ -570,34 +589,55 @@ class WerkspotScraper:
             self.driver.quit()
             print("Browser gesloten.")
 
-def run_werkspot_scraper(target_url, csv_filename=None, excel_filename=None, load_existing=True, headless=False, max_additional_pages=None):
+def run_werkspot_scraper(target_url, csv_filename=None, excel_filename=None, load_existing=True, headless=False, max_additional_pages=None, title=None, stop_callback=None):
     """Voer de Werkspot scraper uit met gegeven parameters."""
-    scraper = WerkspotScraper(headless=headless, load_existing=load_existing)
+    scraper = WerkspotScraper(headless=headless, load_existing=load_existing, stop_callback=stop_callback)
     
     try:
         # Scrape de pagina
-        print("=" * 60)
-        print("WERKSPOT SCRAPER")
-        print("=" * 60)
-        
         companies = scraper.scrape_category_page(target_url, max_additional_pages=max_additional_pages)
         
-        print(f"\n✅ Scrapen voltooid!")
+        # Check of gestopt is (via callback of via flag)
+        was_stopped = scraper._was_stopped or (stop_callback and stop_callback())
+        
+        if was_stopped:
+            print(f"\n⚠️ Scrapen gestopt door gebruiker")
+        else:
+            print(f"\n✅ Scrapen voltooid")
+        
         print(f"📊 Totaal verzameld: {len(companies)} bedrijven")
         
-        # Opslaan met aangepaste bestandsnamen indien opgegeven
-        print("\n💾 Gegevens opslaan...")
-        if csv_filename:
-            scraper.save_to_csv(csv_filename)
-        else:
-            scraper.save_to_csv()
-            
-        if excel_filename:
-            scraper.save_to_excel(excel_filename)
-        else:
-            scraper.save_to_excel()
+        # Maak mapje aan als titel is opgegeven
+        output_dir = "scrapes"
+        if title:
+            # Maak veilige mapnaam van titel
+            safe_title = "".join(c for c in title if c.isalnum() or c in (' ', '-', '_')).strip()
+            safe_title = safe_title.replace(' ', '_')
+            output_dir = os.path.join("scrapes", safe_title)
         
-        return companies
+        os.makedirs(output_dir, exist_ok=True)
+        
+        # Genereer bestandsnamen
+        base_name = title.replace(' ', '_').lower() if title else "werkspot_scrape"
+        base_name = "".join(c for c in base_name if c.isalnum() or c in ('_', '-'))
+        
+        if not csv_filename:
+            csv_filename = os.path.join(output_dir, f"{base_name}.csv")
+        else:
+            csv_filename = os.path.join(output_dir, os.path.basename(csv_filename))
+            
+        if not excel_filename:
+            excel_filename = os.path.join(output_dir, f"{base_name}.xlsx")
+        else:
+            excel_filename = os.path.join(output_dir, os.path.basename(excel_filename))
+        
+        # Opslaan met aangepaste bestandsnamen indien opgegeven
+        print("💾 Bestanden opslaan...")
+        scraper.save_to_csv(csv_filename, silent=True)
+        scraper.save_to_excel(excel_filename, silent=True)
+        print(f"✅ {len(companies)} bedrijven opgeslagen")
+        
+        return companies, csv_filename, excel_filename
         
     except Exception as e:
         print(f"\n❌ Fout opgetreden: {e}")

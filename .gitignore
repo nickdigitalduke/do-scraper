@@ -20,6 +20,9 @@ ENV/
 *.xlsx
 *.xls
 
+# Scrapes directory
+scrapes/
+
 # Checkpoints
 checkpoint.txt
 werkspot_checkpoint.txt
