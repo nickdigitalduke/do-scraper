@@ -493,5 +493,6 @@ def download_file(filename):
 if __name__ == '__main__':
     # Op Railway gebruik PORT, lokaal gebruik 5001 (5000 wordt gebruikt door macOS AirPlay)
     port = int(os.environ.get('PORT', 5001))
+    # Op Railway moet debug=False zijn
     app.run(host='0.0.0.0', port=port, debug=False)
 

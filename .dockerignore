@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Git
+.git/
+.gitignore
+
+# Scrapes (niet nodig in container)
+scrapes/
+*.csv
+*.xlsx
+
+# Logs
+*.log
+
+# Backup files
+*.backup
+nixpacks.toml.backup
+
+# Documentation
+*.md
+!README.md
+
