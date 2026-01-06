@@ -491,6 +491,7 @@ def download_file(filename):
     return send_file(file_path, as_attachment=True)
 
 if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5001))  # Gebruik poort 5001 als standaard (5000 wordt gebruikt door macOS AirPlay)
+    # Op Railway gebruik PORT, lokaal gebruik 5001 (5000 wordt gebruikt door macOS AirPlay)
+    port = int(os.environ.get('PORT', 5001))
     app.run(host='0.0.0.0', port=port, debug=False)
 

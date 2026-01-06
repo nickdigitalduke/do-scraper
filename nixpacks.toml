@@ -1,9 +1,10 @@
 [phases.setup]
-nixPkgs = ["python313", "chromium", "chromedriver"]
+nixPkgs = ["python313", "python313Packages.pip", "chromium", "chromedriver"]
 
 [phases.install]
 cmds = [
-  "pip install -r requirements.txt",
+  "python3 -m pip install --upgrade pip",
+  "python3 -m pip install -r requirements.txt",
   "export CHROME_BIN=$(which chromium)"
 ]
 
@@ -11,5 +12,5 @@ cmds = [
 cmds = []
 
 [start]
-cmd = "export CHROME_BIN=$(which chromium) && python app.py"
+cmd = "export CHROME_BIN=$(which chromium) && export PORT=${PORT:-5000} && python3 app.py"
 
