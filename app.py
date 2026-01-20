@@ -6,7 +6,6 @@ import threading
 import json
 import glob
 from script import run_scraper as run_trustoo_scraper
-from werkspot_scraper import run_werkspot_scraper
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production')
@@ -65,8 +64,8 @@ scraper_status = {
     'last_scraper_instance': None  # Houd laatste scraper instance bij voor bestanden
 }
 
-def run_scraper_thread(scraper_type, url, csv_file, excel_file, load_existing, title=None):
-    """Voer scraper uit in aparte thread."""
+def run_scraper_thread(url, load_existing=False):
+    """Voer Trustoo scraper uit in aparte thread."""
     global scraper_status
     
     scraper_status['running'] = True
@@ -76,11 +75,6 @@ def run_scraper_thread(scraper_type, url, csv_file, excel_file, load_existing, t
     scraper_status['csv_file'] = None
     scraper_status['excel_file'] = None
     scraper_status['scraper_instance'] = None
-    
-    # Opslaan van parameters voor gebruik bij stop
-    scraper_status['_csv_file'] = csv_file
-    scraper_status['_excel_file'] = excel_file
-    scraper_status['_title'] = title
     
     try:
         # Redirect output naar status
@@ -109,114 +103,74 @@ def run_scraper_thread(scraper_type, url, csv_file, excel_file, load_existing, t
             def should_stop():
                 return scraper_status.get('stop_requested', False)
             
-            scraper_instance = None
+            from script import TrustooPreciseScraper
+            import os as os_module
             
-            if scraper_type == 'trustoo':
-                from script import TrustooPreciseScraper
-                # Maak scraper instance direct aan
-                scraper_instance = TrustooPreciseScraper(
-                    headless=False,  # Lokaal: niet headless zodat gebruiker kan zien wat er gebeurt
-                    load_existing=load_existing,
-                    stop_callback=should_stop
-                )
-                # OPSLAAN IN STATUS VOOR DIRECTE TOEGANG
-                scraper_status['scraper_instance'] = scraper_instance
+            # Maak scraper instance direct aan (altijd Trustoo)
+            scraper_instance = TrustooPreciseScraper(
+                headless=False,  # Lokaal: niet headless zodat gebruiker kan zien wat er gebeurt
+                load_existing=load_existing,
+                stop_callback=should_stop
+            )
+            # OPSLAAN IN STATUS VOOR DIRECTE TOEGANG
+            scraper_status['scraper_instance'] = scraper_instance
+            
+            try:
+                # Scrape de pagina
+                # resume_from_checkpoint moet alleen True zijn als load_existing True is
+                resume_from_checkpoint = load_existing
+                companies = scraper_instance.scrape_category_page(url, max_additional_pages=None, resume_from_checkpoint=resume_from_checkpoint)
                 
-                try:
-                    # Scrape de pagina
-                    # resume_from_checkpoint moet alleen True zijn als load_existing True is
-                    resume_from_checkpoint = load_existing
-                    companies = scraper_instance.scrape_category_page(url, max_additional_pages=None, resume_from_checkpoint=resume_from_checkpoint)
-                    
-                    # Check of gestopt is
-                    was_stopped = scraper_instance._was_stopped or should_stop()
-                    
-                    if was_stopped:
-                        print(f"\n⚠️ Scrapen gestopt door gebruiker")
-                    else:
-                        print(f"\n✅ Scrapen voltooid")
-                    
-                    print(f"📊 Totaal verzameld: {len(companies)} bedrijven")
-                    
-                    # Genereer bestandsnamen
-                    output_dir = "scrapes"
-                    if title:
-                        safe_title = "".join(c for c in title if c.isalnum() or c in (' ', '-', '_')).strip()
-                        safe_title = safe_title.replace(' ', '_')
-                        output_dir = os.path.join("scrapes", safe_title)
-                    os.makedirs(output_dir, exist_ok=True)
-                    
-                    base_name = title.replace(' ', '_').lower() if title else "trustoo_scrape"
-                    base_name = "".join(c for c in base_name if c.isalnum() or c in ('_', '-'))
-                    
-                    # Gebruik altijd de titel in de bestandsnaam, tenzij expliciet een andere naam is opgegeven
-                    if not csv_file:
-                        csv_path = os_module.path.join(output_dir, f"{base_name}.csv")
-                    else:
-                        # Als er een custom naam is, gebruik die maar plaats in de juiste directory
-                        csv_filename = os_module.path.basename(csv_file)
-                        # Als de custom naam geen extensie heeft, voeg .csv toe
-                        if not csv_filename.endswith('.csv'):
-                            csv_filename = f"{csv_filename}.csv"
-                        csv_path = os_module.path.join(output_dir, csv_filename)
-                        
-                    if not excel_file:
-                        excel_path = os_module.path.join(output_dir, f"{base_name}.xlsx")
-                    else:
-                        # Als er een custom naam is, gebruik die maar plaats in de juiste directory
-                        excel_filename = os_module.path.basename(excel_file)
-                        # Als de custom naam geen extensie heeft, voeg .xlsx toe
-                        if not excel_filename.endswith('.xlsx'):
-                            excel_filename = f"{excel_filename}.xlsx"
-                        excel_path = os_module.path.join(output_dir, excel_filename)
-                    
-                    # Opslaan - gebruik absolute paden
-                    abs_csv_path = os.path.abspath(csv_path)
-                    abs_excel_path = os.path.abspath(excel_path)
-                    
-                    print(f"💾 Bestanden opslaan naar: {abs_csv_path}")
-                    scraper_instance.save_to_csv(abs_csv_path, silent=True)
-                    scraper_instance.save_to_excel(abs_excel_path, silent=True)
-                    
-                    # Verifieer dat bestanden zijn aangemaakt
-                    if os.path.exists(abs_csv_path):
-                        file_size = os.path.getsize(abs_csv_path)
-                        print(f"✅ CSV bestand aangemaakt: {abs_csv_path} ({file_size} bytes)")
-                    else:
-                        print(f"⚠️ CSV bestand NIET aangemaakt: {abs_csv_path}")
-                    
-                    if os.path.exists(abs_excel_path):
-                        file_size = os.path.getsize(abs_excel_path)
-                        print(f"✅ Excel bestand aangemaakt: {abs_excel_path} ({file_size} bytes)")
-                    else:
-                        print(f"⚠️ Excel bestand NIET aangemaakt: {abs_excel_path}")
-                    
-                    print(f"✅ {len(companies)} bedrijven opgeslagen")
-                    
-                    scraper_status['companies_count'] = len(companies)
-                    scraper_status['csv_file'] = csv_path
-                    scraper_status['excel_file'] = excel_path
-                    
-                finally:
-                    # Sluit browser
-                    scraper_instance.close()
-                    scraper_status['scraper_instance'] = None
-                    
-            else:  # werkspot
-                companies, csv_path, excel_path = run_werkspot_scraper(
-                    target_url=url,
-                    csv_filename=csv_file,
-                    excel_filename=excel_file,
-                    load_existing=load_existing,
-                    headless=False,  # Lokaal: niet headless
-                    max_additional_pages=None,
-                    title=title,
-                    stop_callback=should_stop
-                )
+                # Check of gestopt is
+                was_stopped = scraper_instance._was_stopped or should_stop()
+                
+                if was_stopped:
+                    print(f"\n⚠️ Scrapen gestopt door gebruiker")
+                else:
+                    print(f"\n✅ Scrapen voltooid")
+                
+                print(f"📊 Totaal verzameld: {len(companies)} bedrijven")
+                print("ℹ️ Bedrijven zijn automatisch verrijkt met Ad Hoc Data tijdens het scrapen")
+                
+                # Genereer bestandsnamen met standaard naam
+                output_dir = "scrapes"
+                os.makedirs(output_dir, exist_ok=True)
+                
+                base_name = "trustoo_scrape"
+                csv_path = os_module.path.join(output_dir, f"{base_name}.csv")
+                excel_path = os_module.path.join(output_dir, f"{base_name}.xlsx")
+                
+                # Opslaan - gebruik absolute paden
+                abs_csv_path = os.path.abspath(csv_path)
+                abs_excel_path = os.path.abspath(excel_path)
+                
+                print(f"💾 Bestanden opslaan naar: {abs_csv_path}")
+                scraper_instance.save_to_csv(abs_csv_path, silent=True)
+                scraper_instance.save_to_excel(abs_excel_path, silent=True)
+                
+                # Verifieer dat bestanden zijn aangemaakt
+                if os.path.exists(abs_csv_path):
+                    file_size = os.path.getsize(abs_csv_path)
+                    print(f"✅ CSV bestand aangemaakt: {abs_csv_path} ({file_size} bytes)")
+                else:
+                    print(f"⚠️ CSV bestand NIET aangemaakt: {abs_csv_path}")
+                
+                if os.path.exists(abs_excel_path):
+                    file_size = os.path.getsize(abs_excel_path)
+                    print(f"✅ Excel bestand aangemaakt: {abs_excel_path} ({file_size} bytes)")
+                else:
+                    print(f"⚠️ Excel bestand NIET aangemaakt: {abs_excel_path}")
+                
+                print(f"✅ {len(companies)} bedrijven opgeslagen")
                 
                 scraper_status['companies_count'] = len(companies)
                 scraper_status['csv_file'] = csv_path
                 scraper_status['excel_file'] = excel_path
+                
+            finally:
+                # Sluit browser
+                scraper_instance.close()
+                scraper_status['scraper_instance'] = None
             
             if scraper_status.get('stop_requested', False):
                 scraper_status['output'].append(f"\n\n⚠️ Scrapen gestopt door gebruiker\n📊 Totaal verzameld: {len(companies)} bedrijven\n💾 Bestanden opgeslagen in: {csv_path}\n")
@@ -290,23 +244,19 @@ def start_scraper():
         return jsonify({'error': 'Scraper draait al'}), 400
     
     data = request.json
-    scraper_type = data.get('scraper_type', 'trustoo')
     url = data.get('url', '')
-    mode = data.get('mode', 'new')
-    csv_file = data.get('csv_file') or None
-    excel_file = data.get('excel_file') or None
-    title = data.get('title') or None
     
     # Validatie
     if not url or not url.startswith('http'):
         return jsonify({'error': 'Ongeldige URL'}), 400
     
-    load_existing = (mode == 'continue')
+    # Altijd nieuw bestand aanmaken (mode is niet meer nodig)
+    load_existing = False
     
     # Start scraper in thread
     thread = threading.Thread(
         target=run_scraper_thread,
-        args=(scraper_type, url, csv_file, excel_file, load_existing, title),
+        args=(url, load_existing),
         daemon=True
     )
     thread.start()

@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Scraper - Trustoo & Werkspot</title>
+    <title>Scraper - Trustoo</title>
     <style>
         * {
             margin: 0;
@@ -213,58 +213,15 @@
 <body>
     <div class="container">
         <header>
-            <h1>🚀 Scraper - Trustoo & Werkspot</h1>
+            <h1>🚀 Scraper - Trustoo</h1>
             <a href="/logout" class="logout-btn">Uitloggen</a>
         </header>
         
         <form id="scraperForm">
             <div class="form-section">
                 <div class="form-group">
-                    <label>Kies Scraper:</label>
-                    <div class="radio-group">
-                        <label>
-                            <input type="radio" name="scraper_type" value="trustoo" checked>
-                            Trustoo
-                        </label>
-                        <label>
-                            <input type="radio" name="scraper_type" value="werkspot">
-                            Werkspot
-                        </label>
-                    </div>
-                </div>
-                
-                <div class="form-group">
-                    <label for="title">Titel voor scrape (optioneel):</label>
-                    <input type="text" id="title" name="title" placeholder="Bijv: Gevelreiniging Nederland">
-                </div>
-                
-                <div class="form-group">
                     <label for="url">URL:</label>
                     <input type="text" id="url" name="url" value="https://trustoo.nl/nederland/elektricien/" required>
-                </div>
-                
-                <div class="form-group">
-                    <label>Bestandsmodus:</label>
-                    <div class="radio-group">
-                        <label>
-                            <input type="radio" name="mode" value="new" checked>
-                            Nieuw bestand aanmaken
-                        </label>
-                        <label>
-                            <input type="radio" name="mode" value="continue">
-                            Doorgaan in bestaand bestand
-                        </label>
-                    </div>
-                </div>
-                
-                <div class="form-group">
-                    <label for="csv_file">CSV bestand (optioneel):</label>
-                    <input type="text" id="csv_file" name="csv_file" placeholder="Laat leeg voor standaard naam">
-                </div>
-                
-                <div class="form-group">
-                    <label for="excel_file">Excel bestand (optioneel):</label>
-                    <input type="text" id="excel_file" name="excel_file" placeholder="Laat leeg voor standaard naam">
                 </div>
                 
                 <div class="button-group">
@@ -298,18 +255,6 @@
         let statusCheckInterval = null;
         let isRunning = false;
         
-        // Update URL bij scraper type change
-        document.querySelectorAll('input[name="scraper_type"]').forEach(radio => {
-            radio.addEventListener('change', function() {
-                const urlInput = document.getElementById('url');
-                if (this.value === 'trustoo') {
-                    urlInput.value = 'https://trustoo.nl/nederland/elektricien/';
-                } else {
-                    urlInput.value = 'https://www.werkspot.nl/elektricien';
-                }
-            });
-        });
-        
         document.getElementById('scraperForm').addEventListener('submit', async function(e) {
             e.preventDefault();
             
@@ -317,12 +262,16 @@
             
             const formData = new FormData(this);
             const data = {
-                scraper_type: formData.get('scraper_type'),
+                // Scraperkeuze staat niet meer in de UI; we gebruiken altijd Trustoo
+                scraper_type: 'trustoo',
                 url: formData.get('url'),
-                mode: formData.get('mode'),
-                csv_file: formData.get('csv_file') || null,
-                excel_file: formData.get('excel_file') || null,
-                title: formData.get('title') || null
+                // Bestandsmodus staat niet meer in de UI: we gebruiken standaard 'new'
+                mode: 'new',
+                // CSV/Excel bestandsnamen zijn verwijderd uit de UI; backend gebruikt nu standaardnamen
+                csv_file: null,
+                excel_file: null,
+                // Titelveld is uit de UI gehaald, backend gebruikt standaardnaam
+                title: null
             };
             
             try {

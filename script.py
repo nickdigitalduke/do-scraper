@@ -57,6 +57,18 @@ class TrustooPreciseScraper:
         # Flag om bij te houden of we gestopt zijn
         self._was_stopped = False
         
+        # Ad Hoc Data API client (optioneel)
+        self.ad_hoc_api = None
+        try:
+            from ad_hoc_data import AdHocDataAPI
+            api_key = os.environ.get('AD_HOC_DATA_API_KEY', '52239725-9f5a-4719-94ac-563f789e537b')
+            if api_key:
+                self.ad_hoc_api = AdHocDataAPI(api_key=api_key)
+                print("✅ Ad Hoc Data API verbinding actief")
+        except Exception as e:
+            print(f"⚠️ Ad Hoc Data API niet beschikbaar: {str(e)}")
+            print("   Bedrijven worden opgeslagen zonder verrijking.")
+        
         # Laad bestaande data als die er is
         if load_existing:
             self.load_existing_data()
@@ -137,22 +149,50 @@ class TrustooPreciseScraper:
     
     def extract_company_info(self, company_element):
         """Haal gegevens uit een enkel bedrijfsblok - PRECIES voor Trustoo's HTML."""
-        try:
-            # 1. Bedrijfsnaam - uit h3 met specifieke class
-            name_element = company_element.find_element(By.CSS_SELECTOR, "h3.proNameNew-module__5tvS2q__companyName")
-            name = name_element.text.strip() if name_element else "Niet gevonden"
-        except NoSuchElementException:
-            name = "Niet gevonden"
+        # 1. Bedrijfsnaam - probeer meerdere selectors
+        name = "Niet gevonden"
+        name_selectors = [
+            "h3.proNameNew-module__5tvS2q__companyName",  # Originele selector
+            "h3[class*='companyName']",  # Meer flexibele selector
+            "h3[class*='proName']",  # Alternatief
+            "h2, h3",  # Fallback naar elke h2/h3
+            "a[href*='/profiel/']",  # Fallback naar link tekst
+        ]
         
-        try:
-            # 2. Adres - uit het eerste place item
-            address_element = company_element.find_element(
-                By.XPATH, 
-                ".//div[contains(@class, 'proBullets-module__JgvdTG__list')]//div[contains(text(), ',')]"
-            )
-            address = address_element.text.strip() if address_element else "Niet gevonden"
-        except NoSuchElementException:
-            address = "Niet gevonden"
+        for selector in name_selectors:
+            try:
+                name_element = company_element.find_element(By.CSS_SELECTOR, selector)
+                name_text = name_element.text.strip()
+                if name_text and name_text != "Niet gevonden":
+                    name = name_text
+                    break
+            except NoSuchElementException:
+                continue
+        
+        # 2. Adres - probeer meerdere selectors
+        address = "Niet gevonden"
+        address_selectors = [
+            # Nieuwe structuur: adres zit in ellipsis div binnen placeWrapper
+            (By.XPATH, ".//div[contains(@class, 'proBullets-module__JgvdTG__list')]//div[contains(@class, 'ellipsis-module__O8e_Ha__ellipsis')]"),
+            # Alternatief: zoek naar div met place icon en dan de tekst ernaast
+            (By.XPATH, ".//div[contains(@class, 'proBullets-module__JgvdTG__list')]//div[contains(@class, 'placeWrapper')]//div[contains(text(), ',')]"),
+            # Origineel: zoek naar div met komma in tekst
+            (By.XPATH, ".//div[contains(@class, 'proBullets-module__JgvdTG__list')]//div[contains(text(), ',')]"),
+            # Meer flexibel
+            (By.XPATH, ".//div[contains(@class, 'proBullets')]//div[contains(text(), ',')]"),
+            # Fallback
+            (By.XPATH, ".//*[contains(text(), ',') and string-length(text()) > 5]"),
+        ]
+        
+        for selector_type, selector in address_selectors:
+            try:
+                address_element = company_element.find_element(selector_type, selector)
+                address_text = address_element.text.strip()
+                if address_text and ',' in address_text and len(address_text) > 5:
+                    address = address_text
+                    break
+            except NoSuchElementException:
+                continue
         
         # 3. Telefoonnummer - zoek in proBullets
         phone = "Niet vermeld"
@@ -802,10 +842,13 @@ class TrustooPreciseScraper:
             
             # Vind ALLE bedrijfscontainers - probeer meerdere keren om te zorgen dat alle content geladen is
             company_containers = []
+            
+            # NIEUWE SELECTOR: Trustoo gebruikt nu div[id^="_pro_"][data-pro-id] voor elke bedrijfskaart
+            # Dit is de meest betrouwbare selector omdat elk bedrijf een unieke ID heeft die begint met "_pro_"
             for attempt in range(3):
                 containers = self.driver.find_elements(
                     By.CSS_SELECTOR, 
-                    "div[data-test-id='pro-list-item']"
+                    "div[id^='_pro_'][data-pro-id]"
                 )
                 if len(containers) > len(company_containers):
                     company_containers = containers
@@ -817,17 +860,56 @@ class TrustooPreciseScraper:
                     self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
                     time.sleep(0.5)
             
-            # Als eerste selector niets vindt, probeer alternatieve selector
+            # Als eerste selector niets vindt, probeer alternatieve selectors (fallback voor oude structuur)
             if len(company_containers) == 0:
-                company_containers = self.driver.find_elements(
-                    By.CSS_SELECTOR,
-                    "div[class*='pro-list-item'], div[class*='company-card'], article[class*='company']"
-                )
+                alternative_selectors = [
+                    "div.proListItemNewest-module__tr-fyq__mainSection",  # Nieuwe class-based selector
+                    "div[data-test-id='pro-list-item']",  # Oude selector (voor backwards compatibility)
+                    "div[class*='pro-list-item']",
+                    "div[class*='company-card']",
+                    "article[class*='company']",
+                ]
+                
+                for selector in alternative_selectors:
+                    try:
+                        containers = self.driver.find_elements(By.CSS_SELECTOR, selector)
+                        if len(containers) > len(company_containers):
+                            company_containers = containers
+                            if not silent:
+                                print(f"   ✅ Alternatieve selector werkt: {selector} ({len(containers)} containers)")
+                            break
+                    except Exception as e:
+                        continue
             
             if not silent:
                 print(f"   📋 Gevonden {len(company_containers)} bedrijfscontainers op pagina")
             elif len(company_containers) > 0:
                 print(f"   📋 Gevonden {len(company_containers)} bedrijfscontainers op pagina")
+            
+            # DEBUG: Als er geen containers zijn gevonden, log wat er wel op de pagina staat
+            if len(company_containers) == 0:
+                print(f"   ⚠️  GEEN bedrijfscontainers gevonden!")
+                print(f"   🔍 Debug: Zoeken naar mogelijke containers...")
+                try:
+                    # Probeer verschillende algemene selectors om te zien wat er op de pagina staat
+                    all_divs = self.driver.find_elements(By.CSS_SELECTOR, "div")
+                    print(f"   📊 Totaal aantal divs op pagina: {len(all_divs)}")
+                    
+                    # Zoek naar divs met data-test-id attributen
+                    test_id_divs = self.driver.find_elements(By.CSS_SELECTOR, "[data-test-id]")
+                    if test_id_divs:
+                        print(f"   📊 Divs met data-test-id: {len(test_id_divs)}")
+                        # Toon eerste paar voorbeelden
+                        for i, div in enumerate(test_id_divs[:5]):
+                            test_id = div.get_attribute('data-test-id')
+                            print(f"      - data-test-id='{test_id}'")
+                    
+                    # Zoek naar links naar profielen
+                    profile_links = self.driver.find_elements(By.CSS_SELECTOR, "a[href*='/profiel/'], a[href*='/bedrijf/']")
+                    if profile_links:
+                        print(f"   📊 Links naar profielen gevonden: {len(profile_links)}")
+                except Exception as debug_err:
+                    print(f"   ⚠️  Debug fout: {str(debug_err)[:100]}")
             
             added_count = 0
             skipped_count = 0
@@ -843,6 +925,18 @@ class TrustooPreciseScraper:
                     is_new = False
                     skip_reason = ""
                     
+                    # BELANGRIJK: Skip bedrijven waarvan naam EN adres beide "Niet gevonden" zijn
+                    # Dit zijn waarschijnlijk fouten in de scraping, geen echte bedrijven
+                    naam = company_info.get('Naam', '') or ''
+                    adres = company_info.get('Adres', '') or ''
+                    
+                    if naam == "Niet gevonden" and adres == "Niet gevonden":
+                        skip_reason = "geen data gevonden"
+                        skipped_count += 1
+                        if not silent:
+                            print(f"⚠️ Bedrijf overgeslagen: geen naam of adres gevonden")
+                        continue
+                    
                     # Gebruik URL als primaire identifier als die er is
                     if company_info.get('ProfielURL') and company_info['ProfielURL']:
                         if company_info['ProfielURL'] not in self.existing_urls:
@@ -850,18 +944,27 @@ class TrustooPreciseScraper:
                         else:
                             skip_reason = "duplicate URL"
                     else:
-                        # Als er geen URL is, gebruik naam+adres als identifier (ook als naam leeg is)
-                        naam = company_info.get('Naam', '') or ''
-                        adres = company_info.get('Adres', '') or ''
-                        key = (naam, adres)
-                        
-                        # Voeg toe als het niet een lege duplicate is
-                        if key not in self.existing_keys:
-                            is_new = True
+                        # Als er geen URL is, gebruik naam+adres als identifier
+                        # Maar alleen als minstens één van beide gevonden is
+                        if naam != "Niet gevonden" or adres != "Niet gevonden":
+                            key = (naam, adres)
+                            # Voeg toe als het niet een lege duplicate is
+                            if key not in self.existing_keys:
+                                is_new = True
+                            else:
+                                skip_reason = "duplicate naam+adres"
                         else:
-                            skip_reason = "duplicate naam+adres"
+                            skip_reason = "geen identifier beschikbaar"
                     
                     if is_new:
+                        # Verrijk met Ad Hoc Data API direct na scrapen
+                        if self.ad_hoc_api:
+                            try:
+                                company_info = self.ad_hoc_api.enrich_company(company_info)
+                            except Exception as e:
+                                if not silent:
+                                    print(f"   ⚠️ Verrijking mislukt voor {company_info.get('Naam', 'Onbekend')}: {str(e)[:50]}")
+                        
                         self.companies_data.append(company_info)
                         # Update de sets direct (veel sneller!)
                         if company_info.get('ProfielURL'):
@@ -877,9 +980,12 @@ class TrustooPreciseScraper:
                             display_naam = company_info.get('Naam', 'Geen naam')[:50]
                             score = company_info.get('TrustScore', 'N/A')
                             reviews = company_info.get('AantalReviews', '0')
-                            print(f"✓ {display_naam} (Score: {score}, Reviews: {reviews})")
+                            verrijkt = "✓" if company_info.get('AdHocData_Verrijkt') == 'Ja' else "○"
+                            print(f"{verrijkt} {display_naam} (Score: {score}, Reviews: {reviews})")
                     else:
                         skipped_count += 1
+                        if not silent and skip_reason:
+                            print(f"⚠️ Overgeslagen: {skip_reason}")
                     
                 except StaleElementReferenceException:
                     skipped_count += 1
@@ -943,11 +1049,11 @@ class TrustooPreciseScraper:
         
         df = pd.DataFrame(self.companies_data)
         
-        # Maak kolommen leesbaarder
+        # Maak kolommen leesbaarder - voeg Ad Hoc Data velden toe
         column_order = [
-            'Naam', 'Adres', 'Telefoon', 'TrustScore', 'AantalReviews',
-            'Beschikbaarheid', 'JarenInBedrijf', 'LaatsteReview',
-            'Beschrijving', 'ProfielURL'
+            'Naam', 'Adres', 'Telefoon', 'Email', 'Website', 'Contactpersoon',
+            'TrustScore', 'AantalReviews', 'Beschikbaarheid', 'JarenInBedrijf', 
+            'LaatsteReview', 'SBI_Code', 'Beschrijving', 'ProfielURL', 'AdHocData_Verrijkt'
         ]
         
         # Alleen kolommen die bestaan
@@ -1030,7 +1136,15 @@ class TrustooPreciseScraper:
         return None, None
     
     def close(self):
-        """Sluit de browser."""
+        """Sluit de browser en Ad Hoc Data API session."""
+        # Sluit Ad Hoc Data API session
+        if self.ad_hoc_api:
+            try:
+                self.ad_hoc_api.close()
+            except:
+                pass
+        
+        # Sluit browser
         if self.driver:
             try:
                 self.driver.quit()

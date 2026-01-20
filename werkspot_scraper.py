@@ -441,29 +441,55 @@ class WerkspotScraper:
         
         return self.companies_data
     
-    def _collect_companies_from_page(self):
+    def _collect_companies_from_page(self, silent=False):
         """Verzamel bedrijven van de huidige pagina."""
         try:
+            # BELANGRIJK: Scroll eerst naar beneden om te zorgen dat ALLE content geladen is
+            try:
+                # Scroll langzaam naar beneden om lazy loading te triggeren
+                for i in range(5):
+                    self.driver.execute_script(f"window.scrollTo(0, {(i+1) * 500});")
+                    time.sleep(0.3)
+                # Scroll naar beneden
+                self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+                time.sleep(1)
+                # Scroll terug naar boven
+                self.driver.execute_script("window.scrollTo(0, 0);")
+                time.sleep(0.5)
+            except:
+                pass
+            
+            # BELANGRIJK: Wacht even tot alle content geladen is
+            time.sleep(1)
+            
             # Zoek naar bedrijfscontainers - Werkspot gebruikt verschillende structuren
             # Probeer verschillende selectors
             company_containers = []
             
-            # Strategie 1: Zoek naar cards/items met links naar profielen
-            try:
-                containers = self.driver.find_elements(
-                    By.CSS_SELECTOR, 
-                    "[class*='card'], [class*='item'], [class*='result'], [class*='company']"
-                )
-                # Filter alleen containers met links naar profielen
-                for container in containers:
-                    try:
-                        links = container.find_elements(By.CSS_SELECTOR, "a[href*='/profiel/'], a[href*='/bedrijf/']")
-                        if links:
-                            company_containers.append(container)
-                    except:
-                        pass
-            except:
-                pass
+            # Strategie 1: Zoek naar cards/items met links naar profielen - probeer meerdere keren
+            for attempt in range(3):
+                try:
+                    containers = self.driver.find_elements(
+                        By.CSS_SELECTOR, 
+                        "[class*='card'], [class*='item'], [class*='result'], [class*='company']"
+                    )
+                    # Filter alleen containers met links naar profielen
+                    for container in containers:
+                        try:
+                            links = container.find_elements(By.CSS_SELECTOR, "a[href*='/profiel/'], a[href*='/bedrijf/']")
+                            if links and container not in company_containers:
+                                company_containers.append(container)
+                        except:
+                            pass
+                    # Als we containers hebben gevonden en dit niet de laatste poging is, wacht even en scroll
+                    if len(company_containers) > 0 and attempt < 2:
+                        time.sleep(0.5)
+                        self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight * 0.5);")
+                        time.sleep(0.5)
+                        self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+                        time.sleep(0.5)
+                except:
+                    pass
             
             # Strategie 2: Als geen containers gevonden, zoek direct naar links
             if not company_containers:
@@ -484,6 +510,12 @@ class WerkspotScraper:
                                 pass
                 except:
                     pass
+            
+            # Log hoeveel containers gevonden zijn
+            if not silent:
+                print(f"   📋 Gevonden {len(company_containers)} bedrijfscontainers op pagina")
+            elif len(company_containers) > 0:
+                print(f"   📋 Gevonden {len(company_containers)} bedrijfscontainers op pagina")
             
             added_count = 0
             skipped_count = 0
@@ -539,9 +571,20 @@ class WerkspotScraper:
                     skipped_count += 1
                     continue
             
-            # Alleen totaal tonen als niet silent
-            if not silent and added_count > 0:
-                print(f"📊 Toegevoegd: {added_count}, Totaal: {len(self.companies_data)}")
+            # ALTIJD totaal tonen (ook als silent, maar alleen als er iets is gebeurd)
+            if not silent:
+                if added_count > 0:
+                    print(f"📊 Toegevoegd: {added_count}, Overgeslagen: {skipped_count}, Totaal: {len(self.companies_data)}")
+                elif skipped_count > 0:
+                    print(f"⚠️  Alle {skipped_count} bedrijven waren duplicates, Totaal: {len(self.companies_data)}")
+                elif len(company_containers) == 0:
+                    print(f"⚠️  Geen bedrijfscontainers gevonden op pagina")
+            elif added_count > 0 or skipped_count > 0:
+                # Zelfs in silent mode, log als er activiteit was
+                print(f"   📊 Verzameld: {added_count} nieuw, {skipped_count} duplicates, Totaal: {len(self.companies_data)}")
+            elif len(company_containers) == 0:
+                # Log ook als er geen containers zijn gevonden (ook in silent mode)
+                print(f"   ⚠️  Geen bedrijfscontainers gevonden op pagina")
                     
         except Exception as e:
             print(f"   ⚠️  Fout bij verzamelen bedrijven: {str(e)[:80]}")
